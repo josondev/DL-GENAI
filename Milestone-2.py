@@ -18,322 +18,462 @@ for dirname, _, filenames in os.walk('/kaggle/input'):
     for filename in filenames:
      (os.path.join(dirname, filename))
 
-# =========================
-# CELL 1 — INIT WANDB
-# =========================
-
 import wandb
 
 run = wandb.init(
     entity="23f2002424-shiv-nadar-university",
     project="23f2002424-t12026",
-    name="milestone1-dataset-processing",
+    name="milestone2-audio-eda-classification",
     config={
+        "model": "DecisionTree",
+        "max_depth": 5,
         "dataset": "messy_mashup",
-        "sample_rate": 22050,
-        "duration_threshold": 5.0,
-        "top_db": 20,
-        "validation_split": 0.17
+        "feature_type": "audio_statistics"
     }
 )
 
-# =========================
-# CELL 2 — DATASET + LOGGING
-# =========================
-
 import os
-import glob
-import random
 import numpy as np
 import pandas as pd
 import librosa
 from tqdm import tqdm
 
+from sklearn.model_selection import train_test_split
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.metrics import f1_score, confusion_matrix, classification_report
 
-DATA_ROOT = "/kaggle/input/jan-2026-dl-gen-ai-project/messy_mashup/genres_stems"
-SR = 22050
-DURATION = 5.0
-TOP_DB = 20
 
-random.seed(67)
-np.random.seed(67)
+ROOT = '/kaggle/input/jan-2026-dl-gen-ai-project/messy_mashup'
+STEMS_PATH = os.path.join(ROOT, 'genres_stems')
 
-GENRES = sorted([
-    g for g in os.listdir(DATA_ROOT)
-    if os.path.isdir(os.path.join(DATA_ROOT, g))
-])
+GENRES = [
+    "blues","classical","country","disco",
+    "hiphop","jazz","metal","pop","reggae","rock"
+]
 
-STEM_KEYS = ['drums', 'vocals', 'bass', 'other']
 
-STEMS = {
-    'drums.wav': 'drums',
-    'vocals.wav': 'vocals',
-    'bass.wav': 'bass',
-    'other.wav': 'other'
-}
+# =========================
+# Q1 Mean Duration Jazz
+# =========================
 
+jazz_path = os.path.join(STEMS_PATH,"jazz")
+durations = []
 
-# ====================================
-# DATASET BUILDING
-# ====================================
+for song in tqdm(os.listdir(jazz_path)):
+    song_path = os.path.join(jazz_path,song)
 
-def build_dataset(root_dir, val_split=0.17, seed=42):
+    if os.path.isdir(song_path):
 
-    train_dataset = {g: {k: [] for k in STEM_KEYS} for g in GENRES}
-    val_dataset   = {g: {k: [] for k in STEM_KEYS} for g in GENRES}
+        for stem in os.listdir(song_path):
 
-    rng = random.Random(seed)
+            file_path = os.path.join(song_path,stem)
 
-    corrupted_count = 0
-    less_5_0491MB = 0
-    greater_5_0493MB = 0
+            if os.path.exists(file_path):
+                try:
+                    y,sr = librosa.load(file_path,sr=None)
+                    durations.append(len(y)/sr)
+                except:
+                    continue
 
-    for genre in GENRES:
+mean_duration = np.mean(durations)
 
-        genre_path = os.path.join(root_dir, genre)
-        songs = sorted(os.listdir(genre_path))
-        valid_songs = []
+print("Answer Q1:",mean_duration)
 
-        for song in songs:
+wandb.log({"mean_duration_jazz":mean_duration})
 
-            song_path = os.path.join(genre_path, song)
-            stem_files = []
 
-            for stem_file in STEMS:
+# =========================
+# Q2 Unique Sample Rates
+# =========================
 
-                fpath = os.path.join(song_path, stem_file)
+sample_rates = set()
 
-                if not os.path.exists(fpath):
-                    break
+for g in GENRES:
 
-                size = os.path.getsize(fpath)
+    genre_path = os.path.join(STEMS_PATH,g)
 
-                if size < 4 * 1024:
-                    corrupted_count += 1
+    for song in os.listdir(genre_path):
 
-                if size < 5.0491 * 1024 * 1024:
-                    less_5_0491MB += 1
+        song_path = os.path.join(genre_path,song)
 
-                if size > 5.0493 * 1024 * 1024:
-                    greater_5_0493MB += 1
+        for stem in os.listdir(song_path):
 
-                stem_files.append(fpath)
+            file_path = os.path.join(song_path,stem)
 
-            if len(stem_files) == 4:
-                valid_songs.append(song_path)
+            if os.path.exists(file_path):
+                try:
+                    y,sr = librosa.load(file_path,sr=None)
+                    sample_rates.add(sr)
+                except:
+                    continue
 
-        rng.shuffle(valid_songs)
+unique_sr = sorted(list(sample_rates))
 
-        split_idx = int(len(valid_songs) * (1 - val_split))
+print("Answer Q2:",unique_sr)
 
-        train_songs = valid_songs[:split_idx]
-        val_songs   = valid_songs[split_idx:]
+wandb.log({"unique_sample_rates":len(unique_sr)})
 
-        for s in train_songs:
-            for stem_file in STEMS:
-                train_dataset[genre][STEMS[stem_file]].append(
-                    os.path.join(s, stem_file)
-                )
 
-        for s in val_songs:
-            for stem_file in STEMS:
-                val_dataset[genre][STEMS[stem_file]].append(
-                    os.path.join(s, stem_file)
-                )
+# =========================
+# Q3 Corrupted Files
+# =========================
 
-    print("\n--- Q1 ---")
-    print("Corrupted + (<5.0491MB):", corrupted_count + less_5_0491MB)
+corrupted_count = 0
 
-    print("\n--- Q2 ---")
-    print("Absolute difference:",
-          abs(greater_5_0493MB - less_5_0491MB))
+for g in GENRES:
 
-    print("\n--- Q3 ---")
+    genre_path = os.path.join(STEMS_PATH,g)
 
-    reggae_train_drums = len(train_dataset['reggae']['drums'])
-    country_val_vocals = len(val_dataset['country']['vocals'])
+    for song in os.listdir(genre_path):
 
-    q3_val = abs(reggae_train_drums - country_val_vocals)
+        song_path = os.path.join(genre_path,song)
 
-    print("Absolute difference:", q3_val)
+        for stem in os.listdir(song_path):
 
-    # WANDB LOGGING
-    wandb.log({
-        "corrupted_plus_small_files": corrupted_count + less_5_0491MB,
-        "size_difference": abs(greater_5_0493MB - less_5_0491MB),
-        "q3_dataset_difference": q3_val
-    })
+            file_path = os.path.join(song_path,stem)
 
-    return train_dataset, val_dataset
+            if os.path.exists(file_path):
 
+                if os.path.getsize(file_path)==0:
+                    corrupted_count +=1
 
-tr, val = build_dataset(DATA_ROOT)
+print("Answer Q3:",corrupted_count)
 
+wandb.log({"corrupted_audio_files":corrupted_count})
 
-# ====================================
-# SILENCE DETECTION
-# ====================================
 
-def find_long_silences(dataset_dict,
-                       sr=SR,
-                       threshold_sec=DURATION,
-                       top_db=TOP_DB):
+# =========================
+# Q4 Avg Peak dB Vocals
+# =========================
 
-    records = []
+peak_db_values = []
 
-    for genre in dataset_dict:
-        for stem in dataset_dict[genre]:
+for g in GENRES:
 
-            for file_path in tqdm(dataset_dict[genre][stem], leave=False):
+    genre_path = os.path.join(STEMS_PATH,g)
 
-                y, _ = librosa.load(file_path, sr=sr)
+    for song in os.listdir(genre_path):
 
-                total_duration = len(y) / sr
-                intervals = librosa.effects.split(y, top_db=top_db)
+        song_path = os.path.join(genre_path,song)
 
-                silence_type = []
-                max_silence = 0
+        vocal_path = os.path.join(song_path,"vocals.wav")
 
-                if len(intervals) == 0:
+        if os.path.exists(vocal_path):
 
-                    max_silence = total_duration
-                    silence_type.append("Full")
+            try:
 
-                else:
+                y,sr = librosa.load(vocal_path,sr=None)
 
-                    if intervals[0][0] > 0:
-                        start_silence = intervals[0][0] / sr
-                        max_silence = max(max_silence, start_silence)
-                        silence_type.append("Start")
+                if len(y)>0:
 
-                    if intervals[-1][1] < len(y):
-                        end_silence = (len(y) - intervals[-1][1]) / sr
-                        max_silence = max(max_silence, end_silence)
-                        silence_type.append("End")
+                    peak = np.max(np.abs(y))
+                    peak_db = 20*np.log10(peak+1e-10)
 
-                    for i in range(len(intervals)-1):
+                    peak_db_values.append(peak_db)
 
-                        gap = (intervals[i+1][0] - intervals[i][1]) / sr
+            except:
+                continue
 
-                        if gap > 0:
-                            max_silence = max(max_silence, gap)
-                            silence_type.append("Middle")
+avg_peak_db = np.mean(peak_db_values)
 
-                if max_silence >= threshold_sec:
+print("Answer Q4:",avg_peak_db)
 
-                    records.append({
-                        "Genre": genre,
-                        "Stem": stem,
-                        "Duration": round(total_duration,2),
-                        "Max_Silence_Sec": round(max_silence,2),
-                        "Silence_Location": ", ".join(silence_type),
-                        "File_Path": file_path
-                    })
+wandb.log({"avg_peak_db_vocals":avg_peak_db})
 
-    df = pd.DataFrame(records)
-    return df
 
+# =========================
+# Q5 Mean Spectral Centroid Blues
+# =========================
 
-df_silence = find_long_silences(tr)
+blues_path = os.path.join(STEMS_PATH,"blues")
 
+centroids = []
 
-# ====================================
-# QUESTIONS 4-9
-# ====================================
+for song in os.listdir(blues_path):
 
-q4 = len(df_silence)
+    song_path = os.path.join(blues_path,song)
 
-print("\n--- Q4 ---")
-print("Total files silence >=5:", q4)
+    for fname in ['other.wav','others.wav']:
 
-q5 = len(df_silence[df_silence['Stem']=='vocals'])
+        file_path = os.path.join(song_path,fname)
 
-print("\n--- Q5 ---")
-print("Vocals silence >=5:", q5)
+        if os.path.exists(file_path):
 
-q6 = df_silence[df_silence['Stem']=='vocals']['Max_Silence_Sec'].mean()
+            try:
 
-print("\n--- Q6 ---")
-print("Average silence vocals:", q6)
+                y,sr = librosa.load(file_path,sr=22050)
 
-q7 = len(df_silence[(df_silence['Genre']=='jazz') &
-                    (df_silence['Stem']=='drums')])
+                if len(y)>0:
 
-print("\n--- Q7 ---")
-print("Jazz drums silence >=5:", q7)
+                    spec_cent = np.mean(
+                        librosa.feature.spectral_centroid(y=y,sr=sr)
+                    )
 
-q8 = len(df_silence[(df_silence['Genre']=='jazz') &
-                    (df_silence['Stem']=='drums') &
-                    (df_silence['Silence_Location']=='Middle')])
+                    centroids.append(spec_cent)
 
-print("\n--- Q8 ---")
-print("Jazz drums middle only:", q8)
+            except:
+                continue
 
-q9 = len(df_silence[(df_silence['Genre']=='jazz') &
-                    (df_silence['Stem']=='drums') &
-                    (df_silence['Max_Silence_Sec']>=10)])
+mean_centroid_blues = np.mean(centroids)
 
-print("\n--- Q9 ---")
-print("Jazz drums silence >=10:", q9)
+print("Answer Q5:",mean_centroid_blues)
 
+wandb.log({"mean_centroid_blues":mean_centroid_blues})
 
-# LOGGING SILENCE STATS
+
+# =========================
+# Q6 Highest Centroid Genre
+# =========================
+
+genre_centroids = {}
+
+for g in GENRES:
+
+    centroids=[]
+    genre_path = os.path.join(STEMS_PATH,g)
+
+    for song in os.listdir(genre_path):
+
+        song_path = os.path.join(genre_path,song)
+
+        for fname in ['other.wav','others.wav']:
+
+            file_path = os.path.join(song_path,fname)
+
+            if os.path.exists(file_path):
+
+                try:
+
+                    y,sr = librosa.load(file_path,sr=22050)
+
+                    if len(y)>0:
+
+                        spec_cent = np.mean(
+                            librosa.feature.spectral_centroid(y=y,sr=sr)
+                        )
+
+                        centroids.append(spec_cent)
+
+                except:
+                    continue
+
+    if len(centroids)>0:
+        genre_centroids[g]=np.mean(centroids)
+
+highest_centroid_genre = max(genre_centroids,key=genre_centroids.get)
+
+print("Answer Q6:",highest_centroid_genre)
+
+wandb.log({"highest_centroid_genre":highest_centroid_genre})
+
+
+# =========================
+# Q7 Silence Count
+# =========================
+
+silence_count = 0
+
+for g in GENRES:
+
+    genre_path = os.path.join(STEMS_PATH,g)
+
+    for song in os.listdir(genre_path):
+
+        song_path = os.path.join(genre_path,song)
+
+        for stem in os.listdir(song_path):
+
+            file_path = os.path.join(song_path,stem)
+
+            if os.path.exists(file_path):
+
+                try:
+
+                    y,sr = librosa.load(file_path,sr=None)
+
+                    first_half_sec = y[:int(0.5*sr)]
+
+                    if np.max(np.abs(first_half_sec)) < 1e-4:
+                        silence_count+=1
+
+                except:
+                    continue
+
+print("Answer Q7:",silence_count)
+
+wandb.log({"silence_count_first_half":silence_count})
+
+
+# =========================
+# FEATURE EXTRACTION
+# =========================
+
+def extract_features_safe(song_path):
+
+    possible_files=['other.wav','others.wav']
+    file_path=None
+
+    for fname in possible_files:
+
+        temp_path=os.path.join(song_path,fname)
+
+        if os.path.exists(temp_path):
+            file_path=temp_path
+            break
+
+    if file_path is None:
+        return None
+
+    try:
+
+        y,sr=librosa.load(file_path,sr=22050,duration=10)
+
+        if len(y)==0:
+            return None
+
+        tempo,_=librosa.beat.beat_track(y=y,sr=sr)
+        spec_cent=np.mean(librosa.feature.spectral_centroid(y=y,sr=sr))
+        zcr=np.mean(librosa.feature.zero_crossing_rate(y))
+        rolloff=np.mean(librosa.feature.spectral_rolloff(y=y,sr=sr))
+
+        return [float(tempo),spec_cent,zcr,rolloff]
+
+    except:
+        return None
+
+
+# =========================
+# BUILD DATASET
+# =========================
+
+data=[]
+
+for g in GENRES:
+
+    gp=os.path.join(STEMS_PATH,g)
+
+    songs=[s for s in os.listdir(gp) if os.path.isdir(os.path.join(gp,s))]
+
+    for s in songs[:50]:
+
+        data.append({
+            'path':os.path.join(gp,s),
+            'genre':g
+        })
+
+df=pd.DataFrame(data)
+
+train_df,val_df=train_test_split(
+    df,
+    test_size=0.2,
+    stratify=df['genre'],
+    random_state=42
+)
+
+X_train=[]
+y_train=[]
+
+for path,genre in zip(train_df['path'],train_df['genre']):
+
+    features=extract_features_safe(path)
+
+    if features is not None:
+        X_train.append(features)
+        y_train.append(genre)
+
+X_val=[]
+y_val=[]
+
+for path,genre in zip(val_df['path'],val_df['genre']):
+
+    features=extract_features_safe(path)
+
+    if features is not None:
+        X_val.append(features)
+        y_val.append(genre)
+
+X_train=np.array(X_train)
+X_val=np.array(X_val)
+
+print("Train samples:",len(X_train))
+print("Validation samples:",len(X_val))
 
 wandb.log({
-    "files_with_silence_5s": q4,
-    "vocals_silence_5s": q5,
-    "avg_vocal_silence": q6,
-    "jazz_drum_silence_5s": q7,
-    "jazz_drum_middle_silence": q8,
-    "jazz_drum_silence_10s": q9
-})
-
-
-# ====================================
-# MIXING STEMS
-# ====================================
-
-rock_songs = sorted(os.listdir(os.path.join(DATA_ROOT,'rock')))
-first_song = rock_songs[0]
-
-stems_audio = []
-
-for stem_file in STEMS:
-
-    path = os.path.join(DATA_ROOT,'rock',first_song,stem_file)
-
-    y,_ = librosa.load(path, sr=SR, duration=5.0)
-
-    stems_audio.append(y)
-
-stems_stack = np.vstack(stems_audio)
-mix_raw = np.sum(stems_stack, axis=0)
-
-rms_val = np.sqrt(np.mean(mix_raw**2))
-max_val = np.max(np.abs(mix_raw))
-
-
-print("\n--- Q10 ---")
-print("Mix length:", len(mix_raw))
-
-print("\n--- Q11 ---")
-print("RMS:", round(rms_val,2))
-
-print("\n--- Q12 ---")
-print("Max peak before norm:", max_val)
-
-
-# LOG MIX METRICS
-
-wandb.log({
-    "mix_length": len(mix_raw),
-    "mix_rms": rms_val,
-    "mix_max_peak": max_val
+    "train_samples":len(X_train),
+    "validation_samples":len(X_val)
 })
 
 
 # =========================
-# CELL 3 — FINISH RUN
+# MODEL TRAINING
 # =========================
+
+clf = DecisionTreeClassifier(max_depth=5,random_state=42)
+
+clf.fit(X_train,y_train)
+
+y_pred = clf.predict(X_val)
+
+
+# =========================
+# METRICS
+# =========================
+
+macro_f1 = f1_score(y_val,y_pred,average='macro')
+
+cr = classification_report(y_val,y_pred,output_dict=True)
+
+precision_hiphop = cr['hiphop']['precision']
+recall_pop = cr['pop']['recall']
+
+accuracy = np.mean(y_pred==y_val)
+
+print("Answer Q8:",macro_f1)
+print("Answer Q9:",precision_hiphop)
+print("Answer Q10:",recall_pop)
+print("Answer Q11:",accuracy)
+
+wandb.log({
+    "macro_f1":macro_f1,
+    "precision_hiphop":precision_hiphop,
+    "recall_pop":recall_pop,
+    "accuracy":accuracy
+})
+
+
+# =========================
+# CONFUSION MATRIX
+# =========================
+
+cm = confusion_matrix(y_val,y_pred,labels=GENRES)
+
+tp_dict={}
+
+for i,genre in enumerate(GENRES):
+
+    TP = cm[i,i]
+    tp_dict[genre]=TP
+
+highest_tp_genre = max(tp_dict,key=tp_dict.get)
+
+print("Answer Q12:",highest_tp_genre)
+
+fn_dict={}
+
+for i,genre in enumerate(GENRES):
+
+    TP = cm[i,i]
+    FN = np.sum(cm[i,:]) - TP
+    fn_dict[genre]=FN
+
+lowest_fn_genre = min(fn_dict,key=fn_dict.get)
+
+print("Answer Q13:",lowest_fn_genre)
+
+wandb.log({
+    "highest_true_positive_genre":highest_tp_genre,
+    "lowest_false_negative_genre":lowest_fn_genre
+})
+
 
 run.finish()
