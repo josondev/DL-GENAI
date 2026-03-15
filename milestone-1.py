@@ -18,10 +18,28 @@ for dirname, _, filenames in os.walk('/kaggle/input'):
     for filename in filenames:
         (os.path.join(dirname, filename))
 
-# You can write up to 20GB to the current directory (/kaggle/working/) that gets preserved as output when you create a version using "Save & Run All" 
-# You can also write temporary files to /kaggle/temp/, but they won't be saved outside of the current session
+# =========================
+# CELL 1 — INIT WANDB
+# =========================
 
+import wandb
 
+run = wandb.init(
+    entity="23f2002424-shiv-nadar-university",
+    project="23f2002424-t12026",
+    name="milestone1-dataset-processing",
+    config={
+        "dataset": "messy_mashup",
+        "sample_rate": 22050,
+        "duration_threshold": 5.0,
+        "top_db": 20,
+        "validation_split": 0.17
+    }
+)
+
+# =========================
+# CELL 2 — DATASET + LOGGING
+# =========================
 
 import os
 import glob
@@ -40,10 +58,13 @@ TOP_DB = 20
 random.seed(67)
 np.random.seed(67)
 
-GENRES = sorted([g for g in os.listdir(DATA_ROOT) 
-                 if os.path.isdir(os.path.join(DATA_ROOT, g))])
+GENRES = sorted([
+    g for g in os.listdir(DATA_ROOT)
+    if os.path.isdir(os.path.join(DATA_ROOT, g))
+])
 
 STEM_KEYS = ['drums', 'vocals', 'bass', 'other']
+
 STEMS = {
     'drums.wav': 'drums',
     'vocals.wav': 'vocals',
@@ -52,7 +73,9 @@ STEMS = {
 }
 
 
-
+# ====================================
+# DATASET BUILDING
+# ====================================
 
 def build_dataset(root_dir, val_split=0.17, seed=42):
 
@@ -66,19 +89,23 @@ def build_dataset(root_dir, val_split=0.17, seed=42):
     greater_5_0493MB = 0
 
     for genre in GENRES:
+
         genre_path = os.path.join(root_dir, genre)
         songs = sorted(os.listdir(genre_path))
-
         valid_songs = []
 
         for song in songs:
+
             song_path = os.path.join(genre_path, song)
             stem_files = []
 
             for stem_file in STEMS:
+
                 fpath = os.path.join(song_path, stem_file)
+
                 if not os.path.exists(fpath):
                     break
+
                 size = os.path.getsize(fpath)
 
                 if size < 4 * 1024:
@@ -98,6 +125,7 @@ def build_dataset(root_dir, val_split=0.17, seed=42):
         rng.shuffle(valid_songs)
 
         split_idx = int(len(valid_songs) * (1 - val_split))
+
         train_songs = valid_songs[:split_idx]
         val_songs   = valid_songs[split_idx:]
 
@@ -121,10 +149,20 @@ def build_dataset(root_dir, val_split=0.17, seed=42):
           abs(greater_5_0493MB - less_5_0491MB))
 
     print("\n--- Q3 ---")
+
     reggae_train_drums = len(train_dataset['reggae']['drums'])
     country_val_vocals = len(val_dataset['country']['vocals'])
-    print("Absolute difference:",
-          abs(reggae_train_drums - country_val_vocals))
+
+    q3_val = abs(reggae_train_drums - country_val_vocals)
+
+    print("Absolute difference:", q3_val)
+
+    # WANDB LOGGING
+    wandb.log({
+        "corrupted_plus_small_files": corrupted_count + less_5_0491MB,
+        "size_difference": abs(greater_5_0493MB - less_5_0491MB),
+        "q3_dataset_difference": q3_val
+    })
 
     return train_dataset, val_dataset
 
@@ -132,29 +170,37 @@ def build_dataset(root_dir, val_split=0.17, seed=42):
 tr, val = build_dataset(DATA_ROOT)
 
 
+# ====================================
+# SILENCE DETECTION
+# ====================================
 
-
-def find_long_silences(dataset_dict, sr=SR, threshold_sec=DURATION, top_db=TOP_DB):
+def find_long_silences(dataset_dict,
+                       sr=SR,
+                       threshold_sec=DURATION,
+                       top_db=TOP_DB):
 
     records = []
 
     for genre in dataset_dict:
         for stem in dataset_dict[genre]:
+
             for file_path in tqdm(dataset_dict[genre][stem], leave=False):
 
                 y, _ = librosa.load(file_path, sr=sr)
-                total_duration = len(y) / sr
 
+                total_duration = len(y) / sr
                 intervals = librosa.effects.split(y, top_db=top_db)
 
                 silence_type = []
                 max_silence = 0
 
                 if len(intervals) == 0:
+
                     max_silence = total_duration
                     silence_type.append("Full")
 
                 else:
+
                     if intervals[0][0] > 0:
                         start_silence = intervals[0][0] / sr
                         max_silence = max(max_silence, start_silence)
@@ -166,12 +212,15 @@ def find_long_silences(dataset_dict, sr=SR, threshold_sec=DURATION, top_db=TOP_D
                         silence_type.append("End")
 
                     for i in range(len(intervals)-1):
+
                         gap = (intervals[i+1][0] - intervals[i][1]) / sr
+
                         if gap > 0:
                             max_silence = max(max_silence, gap)
                             silence_type.append("Middle")
 
                 if max_silence >= threshold_sec:
+
                     records.append({
                         "Genre": genre,
                         "Stem": stem,
@@ -185,48 +234,76 @@ def find_long_silences(dataset_dict, sr=SR, threshold_sec=DURATION, top_db=TOP_D
     return df
 
 
-
-
 df_silence = find_long_silences(tr)
 
+
+# ====================================
+# QUESTIONS 4-9
+# ====================================
+
+q4 = len(df_silence)
+
 print("\n--- Q4 ---")
-print("Total files silence >=5:", len(df_silence))
+print("Total files silence >=5:", q4)
+
+q5 = len(df_silence[df_silence['Stem']=='vocals'])
 
 print("\n--- Q5 ---")
-print("Vocals silence >=5:",
-      len(df_silence[df_silence['Stem']=='vocals']))
+print("Vocals silence >=5:", q5)
+
+q6 = df_silence[df_silence['Stem']=='vocals']['Max_Silence_Sec'].mean()
 
 print("\n--- Q6 ---")
-print("Average silence vocals:",
-      df_silence[df_silence['Stem']=='vocals']['Max_Silence_Sec'].mean())
+print("Average silence vocals:", q6)
+
+q7 = len(df_silence[(df_silence['Genre']=='jazz') &
+                    (df_silence['Stem']=='drums')])
 
 print("\n--- Q7 ---")
-print("Jazz drums silence >=5:",
-      len(df_silence[(df_silence['Genre']=='jazz') &
-                     (df_silence['Stem']=='drums')]))
+print("Jazz drums silence >=5:", q7)
+
+q8 = len(df_silence[(df_silence['Genre']=='jazz') &
+                    (df_silence['Stem']=='drums') &
+                    (df_silence['Silence_Location']=='Middle')])
 
 print("\n--- Q8 ---")
-print("Jazz drums middle only:",
-      len(df_silence[(df_silence['Genre']=='jazz') &
-                     (df_silence['Stem']=='drums') &
-                     (df_silence['Silence_Location']=='Middle')]))
+print("Jazz drums middle only:", q8)
+
+q9 = len(df_silence[(df_silence['Genre']=='jazz') &
+                    (df_silence['Stem']=='drums') &
+                    (df_silence['Max_Silence_Sec']>=10)])
 
 print("\n--- Q9 ---")
-print("Jazz drums silence >=10:",
-      len(df_silence[(df_silence['Genre']=='jazz') &
-                     (df_silence['Stem']=='drums') &
-                     (df_silence['Max_Silence_Sec']>=10)]))
+print("Jazz drums silence >=10:", q9)
 
 
+# LOGGING SILENCE STATS
 
+wandb.log({
+    "files_with_silence_5s": q4,
+    "vocals_silence_5s": q5,
+    "avg_vocal_silence": q6,
+    "jazz_drum_silence_5s": q7,
+    "jazz_drum_middle_silence": q8,
+    "jazz_drum_silence_10s": q9
+})
+
+
+# ====================================
+# MIXING STEMS
+# ====================================
 
 rock_songs = sorted(os.listdir(os.path.join(DATA_ROOT,'rock')))
 first_song = rock_songs[0]
 
 stems_audio = []
+
 for stem_file in STEMS:
+
     path = os.path.join(DATA_ROOT,'rock',first_song,stem_file)
+
     y,_ = librosa.load(path, sr=SR, duration=5.0)
+
     stems_audio.append(y)
 
 stems_stack = np.vstack(stems_audio)
@@ -234,6 +311,7 @@ mix_raw = np.sum(stems_stack, axis=0)
 
 rms_val = np.sqrt(np.mean(mix_raw**2))
 max_val = np.max(np.abs(mix_raw))
+
 
 print("\n--- Q10 ---")
 print("Mix length:", len(mix_raw))
@@ -243,3 +321,19 @@ print("RMS:", round(rms_val,2))
 
 print("\n--- Q12 ---")
 print("Max peak before norm:", max_val)
+
+
+# LOG MIX METRICS
+
+wandb.log({
+    "mix_length": len(mix_raw),
+    "mix_rms": rms_val,
+    "mix_max_peak": max_val
+})
+
+
+# =========================
+# CELL 3 — FINISH RUN
+# =========================
+
+run.finish()
