@@ -12,7 +12,7 @@ import numpy as np
 import streamlit as st
 import torch
 import torch.nn.functional as F
-import torchaudio
+import librosa
 from pathlib import Path
 from transformers import ASTForAudioClassification, ASTFeatureExtractor
 
@@ -198,10 +198,8 @@ def load_waveform(file_bytes: bytes) -> torch.Tensor:
         tmp.write(file_bytes)
         tmp_path = tmp.name
     try:
-        waveform, sr = torchaudio.load(tmp_path)
-        if sr != SR:
-            waveform = torchaudio.functional.resample(waveform, sr, SR)
-        waveform = waveform.mean(0)
+        waveform, sr = librosa.load(tmp_path, sr=SR, mono=True)
+        waveform = torch.from_numpy(waveform).float()
     finally:
         os.unlink(tmp_path)
     return waveform
