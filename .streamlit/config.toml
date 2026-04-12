@@ -1,0 +1,15 @@
+[theme]
+base = "dark"
+backgroundColor = "#0a0a0f"
+secondaryBackgroundColor = "#111118"
+primaryColor = "#e8b86d"
+textColor = "#e8e4d8"
+font = "monospace"
+
+[server]
+maxUploadSize = 200        # MB — large audio files
+enableCORS = false
+enableXsrfProtection = true
+
+[runner]
+fastReruns = true
