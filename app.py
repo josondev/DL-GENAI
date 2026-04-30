@@ -286,7 +286,6 @@ st.markdown(
 st.markdown("<br>", unsafe_allow_html=True)
 
 # Upload
-st.markdown('<div class="card">', unsafe_allow_html=True)
 audio_file = st.file_uploader(
     "Drop an audio file",
     type=["wav", "mp3", "flac", "ogg", "m4a"],
