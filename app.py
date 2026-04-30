@@ -314,11 +314,3 @@ if audio_file is not None:
     if probs:
         st.markdown("---")
         render_results(probs)
-
-st.markdown("""
----
-<div style="font-size:0.68rem;color:#3a3448;text-align:center;margin-top:1rem;font-family:'Space Mono',monospace;">
-  Place <code>model_fold0.pth … model_fold3.pth</code> beside <code>app.py</code>
-  or set <code>MODEL_DIR</code> env var · Built with HuggingFace AST + Streamlit
-</div>
-""", unsafe_allow_html=True)
