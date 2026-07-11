@@ -6,3 +6,5 @@ Upload any audio file and get instant genre classification across 10 genres usin
 
 **Model:** `MIT/ast-finetuned-audioset-10-10-0.4593` fine-tuned on the Messy Mashup dataset  
 **Architecture:** 4-fold ensemble · chunked inference with 2s overlap · softmax averaging
+
+**Deployed links:** `https://huggingface.co/spaces/josondev/dl-genai-project` and `https://dl-genai.streamlit.app/`
